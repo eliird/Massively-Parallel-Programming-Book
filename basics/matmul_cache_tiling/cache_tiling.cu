@@ -8,9 +8,12 @@
 
 // deficne the static shmem for calculation convenience
 
-#define SHMEM_SIZE 16 * 16 * 4
+#define TILE_WIDTH 16
 
-__global__ tiledMatMul(int *a, int *b, int *c, int n, int tile_size){
+__global__ tiledMatMul(int *a, int *b, int *c, int n, int k, int tile_size){
+    __shared__ int ds_A[TILE_WIDTH][TILE_WIDTH];
+    __shared__ int ds_B[TILE_WIDTH][TILE_WIDTH];
+
     int tx = threadIdx.x;
     int ty = threadIdx.y;
     int bx = blockIdx.x;
@@ -18,22 +21,22 @@ __global__ tiledMatMul(int *a, int *b, int *c, int n, int tile_size){
 
     int row = by * tile_size + ty;
     int col = bx * tile_size + tx;
+    int Cvalue = 0;
 
-    int temp_val = 0;
+    for (int t=0; t < (n/tile_size); t++){
+        //collaborative loading of tiles A and B in memory
+        ds_A[ty][tx] = A[row*n + t*TILE_WIDTH+tx];
+        ds_B[ty][tx] = B[(t*TILE_WIDTH+tx) *k + col];
 
-    for (int i = 0; i < (n/tile_size); i++){
-        A[(ty * tile_size) + tx] = a[row * n + (i * tile_size + tx)];
-        B[(ty * tile_size) + tx] = b[(i * tile_size * n + ty * n) + col];
+        __syncthreads();
+
+        for (int i=0; i<TILE_WIDTH; i++){
+            Cvalue += ds_A[ty][i] * ds_B[i][tx];
+            __syncthreads();
+        }
+            
     }
-    __syncthreads();
-
-    // calculate teh temp values for this tile
-    for (int j=0; j < tile_size; j++){
-        temp_val += A[(ty * tile_size) + j] * B[(j * tile_size) + tx];
-    }
-    __syncthreads();
-
-    c[(row *n) + col] = temp_val;
+    c[row * k + col] = Cvalue  
 }
 
 void init_matrix(int *a, int n){
