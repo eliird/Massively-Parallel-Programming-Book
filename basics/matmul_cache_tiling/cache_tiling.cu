@@ -6,20 +6,34 @@
 #include <math.h>
 
 
-__global__ matMul(int *a, int *b, int *c, int n){
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+// deficne the static shmem for calculation convenience
 
-    int temp_sum = 0;
+#define SHMEM_SIZE 16 * 16 * 4
 
-    if ((row < n) && (col < n)){
-        // iterate over row and down column
-        for(int k=0; k < n; k++){
-            temp_sum += a[row * n + k] + b[k *n + col];
-        }
+__global__ tiledMatMul(int *a, int *b, int *c, int n, int tile_size){
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
 
-        c[row *n + col] = temp_sum;
+    int row = by * tile_size + ty;
+    int col = bx * tile_size + tx;
+
+    int temp_val = 0;
+
+    for (int i = 0; i < (n/tile_size); i++){
+        A[(ty * tile_size) + tx] = a[row * n + (i * tile_size + tx)];
+        B[(ty * tile_size) + tx] = b[(i * tile_size * n + ty * n) + col];
     }
+    __syncthreads();
+
+    // calculate teh temp values for this tile
+    for (int j=0; j < tile_size; j++){
+        temp_val += A[(ty * tile_size) + j] * B[(j * tile_size) + tx];
+    }
+    __syncthreads();
+
+    c[(row *n) + col] = temp_val;
 }
 
 void init_matrix(int *a, int n){
@@ -90,12 +104,21 @@ int main(){
     dim3 threads(BLOCK_SIZE, BLOCK_SIZE);
 
     //Launch the kernel
-    matrixMul<<<grid, threads>>> (d_a, d_b, d_c, n);
+    tiledMatrixMul<<<grid, threads>>> (d_a, d_b, d_c, n);
 
     //copy back to host
     cudaMemcpy(h_c, d_c, bytes, cydaMemcpyDeviceToHost);
 
     check_answers(h_a, h_b, h_c);
+
+    // free the memory
+    free(h_a);
+    free(h_b);
+    free(h_c);
+    
+    cuda_free(d_a);
+    cuda_free(d_b);
+    cuda_free(d_c);
 
     printf("completed");
 
