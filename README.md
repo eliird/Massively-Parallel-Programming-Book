@@ -1,1 +1,1 @@
-# Learning CUDA
+# Massively-Parallel-Programming-Book
